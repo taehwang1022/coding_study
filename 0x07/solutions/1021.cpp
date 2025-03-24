@@ -12,7 +12,7 @@ int main(void) {
   deque<int> DQ;
   for (int i = 1; i <= n; i++) DQ.push_back(i);
   int ans = 0;
-  while (m--) {
+  while (m--){
     int t;
     cin >> t;
     int idx = find(DQ.begin(), DQ.end(), t) - DQ.begin(); // idx : t가 있는 위치
