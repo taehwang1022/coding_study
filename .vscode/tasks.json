@@ -7,6 +7,7 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
+                "-I", "/usr/include/eigen3",            // ✅ 이 줄 추가!!
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}"

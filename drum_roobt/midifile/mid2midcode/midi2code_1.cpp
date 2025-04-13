@@ -15,7 +15,6 @@ void handleNoteOn(const std::vector<unsigned char>& data, size_t& pos, double &n
 bool readMidiFile(const std::string& filename, std::vector<unsigned char>& buffer);
 void save_to_csv(const std::string& midiFilePath, double &note_on_time, int drumNote);
 
-
 // Read Variable Length Quantity (VLQ) for delta time
 size_t readTime(const std::vector<unsigned char>& data, size_t& pos) {
     size_t value = 0;
@@ -125,6 +124,8 @@ void handleNoteOn(const std::vector<unsigned char>& data, size_t& pos, double &n
         case 42: drumName = "Closed Hi-Hat"; break;
         case 46: drumName = "Open Hi-Hat"; break;
         case 49: drumName = "Crash Cymbal 1"; break;
+        case 51: drumName = "Ride Cymbal 1"; break;
+        case 57: drumName = "Crash Cymbal 2"; break;
         default: drumName = "Unknown Drum"; break;
     }
 
@@ -133,44 +134,43 @@ void handleNoteOn(const std::vector<unsigned char>& data, size_t& pos, double &n
     if(velocity > 0)
     {
         note_on_time = ((note_on_time*60000)/(100 * tpqn))/1000;
-        std::cout << note_on_time <<"s \t"<< "Hit Drum: " << drumName << "\n";
+        std::cout << note_on_time <<"s \t"<< "Hit Drum: " << drumName << " -> "  << (int)drumNote<< "\n";
         save_to_csv(midiFilePath, note_on_time, (int)drumNote);
     }
 
     //save to csv
 
 }
-
-void save_to_csv(const std::string& midiFilePath, double &note_on_time, int drumNote) {
-    std::ofstream file(midiFilePath + ".csv", std::ios::app);
+void save_to_csv(const std::string& outputCsvPath, double &note_on_time, int drumNote) {
+    std::ofstream file(outputCsvPath, std::ios::app);
     if (!file) {
-        std::cerr << "Failed to open CSV file." << std::endl;
+        std::cerr << "Failed to open CSV file: " << outputCsvPath << std::endl;
         return;
     }
-    
+
     int mappedDrumNote;
     std::string drumName;
-    
-    // Convert actual MIDI note numbers to user-defined drum numbers
+
     switch (drumNote) {
-        case 38: mappedDrumNote = 1; drumName = "Snare"; break;
-        case 41: mappedDrumNote = 2; drumName = "Floor Tom"; break;
-        case 47: mappedDrumNote = 3; drumName = "Mid Tom"; break;
-        case 45: mappedDrumNote = 4; drumName = "Top Tom"; break;
-        case 42: mappedDrumNote = 5; drumName = "Hi-Hat Closed"; break;
-        case 51: mappedDrumNote = 6; drumName = "Ride Cymbal"; break;
-        case 49: mappedDrumNote = 7; drumName = "Crash Cymbal"; break;
-        case 36: mappedDrumNote = 10; drumName = "Bass Drum 1"; break;
-        case 46: mappedDrumNote = 11; drumName = "Open Hi-Hat"; break;
-        default: mappedDrumNote = 0; drumName = "Unknown Drum"; break;
+        case 38: mappedDrumNote = 1; break;
+        case 41: mappedDrumNote = 2; break;
+        case 45: mappedDrumNote = 3; break;
+        case 47: mappedDrumNote = 4; break;
+        case 42: mappedDrumNote = 5; break;
+        case 51: mappedDrumNote = 6; break;
+        case 49: mappedDrumNote = 7; break;
+        case 57: mappedDrumNote = 8; break;
+        case 36: mappedDrumNote = 10; break;
+        case 46: mappedDrumNote = 11; break;
+        default: mappedDrumNote = 0; break;
     }
-    
+
     file << note_on_time << "\t " << mappedDrumNote << "\n";
     file.close();
-    
-    
+
     note_on_time = 0;
 }
+
 
 
 // Read MIDI file into buffer
@@ -194,34 +194,37 @@ bool readMidiFile(const std::string& filename, std::vector<unsigned char>& buffe
 }
 
 int main() {
-    std::string midiFilePath;
+    std::string midiNameOnly;  // ex: "input1"
     size_t pos;
     unsigned char runningStatus;
     int initial_setting_flag = 0;
-    std::cout << "Enter MIDI file name: ";
-    std::cin >> midiFilePath;
     double note_on_time = 0;
 
+    std::cout << "Enter MIDI file name (without .mid): ";
+    std::cin >> midiNameOnly;
+
+    // 경로 설정
+    std::string inputPath  = "/home/taehwang/basic-algo-lecture-master/drum_roobt/midifile/midbox/" + midiNameOnly + ".mid";
+    std::string outputPath = "/home/taehwang/basic-algo-lecture-master/drum_roobt/midifile/mid2midcode/" + midiNameOnly + "_mc.csv";
+
+    // MIDI 읽기
     std::vector<unsigned char> midiData;
-    if (readMidiFile(midiFilePath, midiData)) {
-        pos = 22;
-    } 
-
-    // Time division (2 bytes)
-    int division = (midiData[12] << 8) | midiData[13];
-
-    std::cout << "Time Division (TPQN): " << division << " ticks per quarter note\n";
-
-    int tpqn = division; // Ticks per quarter note
-
-
-    while (pos < midiData.size()) {
-
-        size_t time = readTime(midiData, pos);
-        note_on_time += time;
-        analyzeMidiEvent(midiData, pos, runningStatus, initial_setting_flag, note_on_time, tpqn, midiFilePath); 
-
+    if (!readMidiFile(inputPath, midiData)) {
+        return 1;
     }
 
+    // CSV 저장을 위한 포인터 넘길 때 outputPath 사용
+    pos = 22;
+
+    int tpqn = (midiData[12] << 8) | midiData[13];
+    std::cout << "Time Division (TPQN): " << tpqn << " ticks per quarter note\n";
+
+    while (pos < midiData.size()) {
+        size_t time = readTime(midiData, pos);
+        note_on_time += time;
+        analyzeMidiEvent(midiData, pos, runningStatus, initial_setting_flag, note_on_time, tpqn, outputPath);
+    }
+
+    std::cout << "코드 끗." << "\n";
     return 0;
 }
