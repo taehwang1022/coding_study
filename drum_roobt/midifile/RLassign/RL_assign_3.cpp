@@ -75,12 +75,12 @@ Hand getPreferredHandByDistance(int instCurrent, int prevRightNote, int prevLeft
     double tRight = prevRightHit;
     double tLeft = prevLeftHit;
 
-    double real_tRight = tRight * (138 / 100.0);
+    double real_tRight = tRight * (138 / 100.0);// 138 bpm
     double real_tLeft  = tLeft  * (138 / 100.0);
     double normRight = std::min(dRight / dMax, 1.0);
     double normLeft = std::min(dLeft / dMax, 1.0);
 
-
+    
     double rScore = (real_tRight/0.6) * (1-normRight);
     double lScore = (real_tLeft/0.6) * (1-normLeft);
 

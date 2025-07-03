@@ -24,9 +24,11 @@ int main()
 
     for(int i =0; i <n; i++)
     {
+        string line;
+        cin >> line;
         for(int j =0; j < m; j++)
         {
-            cin >> board[i][j];
+            board[i][j] = line[j] -'0';
         }
     }
 
@@ -63,7 +65,10 @@ int main()
             dist[nx][ny] = dist[cur.first][cur.second]+1;
             Q.push({nx,ny});
         }
+
+
     }
+    cout << dist[n-1][m-1] + 1 << '\n'; // 시작점 포함 시 +1    
 
 
     
