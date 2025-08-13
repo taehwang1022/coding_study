@@ -38,29 +38,46 @@ void analyzeMidiEvent(const std::vector<unsigned char>& data, size_t& pos, unsig
     if (pos >= data.size()) return;
 
     unsigned char eventType = data[pos];
+    std::cout << "\n--------------------------------------------------------------\n" ;
+    std::cout << "[DEBUG] pos: " << pos << ", raw byte: 0x" << std::hex << (int)eventType << std::dec << "\n";
 
-    // Update Running Status only for valid event types
-    if (eventType == 0xFF || eventType == 0xB9 || eventType == 0xC9 || eventType == 0x99) {  
+    // Update Running Status
+    if (eventType == 0xFF || eventType == 0xB9 || eventType == 0xC9 || eventType == 0x99 || eventType == 0x89|| eventType == 0xA9) {  
         runningStatus = eventType;
         pos++; // Consume event byte
+        std::cout << "→ RunningStatus set to 0x" << std::hex << (int)runningStatus << std::dec << "\n";
     } else {
-        // Retain Running Status if event type is missing
         eventType = runningStatus;
+        std::cout << "→ Using RunningStatus: 0x" << std::hex << (int)runningStatus << std::dec << "\n";
     }
 
-    // Handle Meta Event
+    // Handle each event
     if (eventType == 0xFF) { 
-        handleMetaEvent(data, pos,initial_setting_flag);
+        std::cout << "[MetaEvent] ";
+        handleMetaEvent(data, pos, initial_setting_flag);
     }
-    // Handle Channel 10 events (0xB9: Control Change, 0xC9: Program Change)
-    else if (eventType == 0xB9 || eventType == 0xC9) { 
+    else if (eventType == 0xB9) { 
+        std::cout << "[Control Change] ";
         handleChannel10(data, pos, eventType);
     }
-    // Handle Note On events (0x99)
-    else if (eventType  == 0x99) { 
-        handleNoteOn(data, pos, note_on_time,tpqn,midiFilePath);
+    else if (eventType == 0xC9) {
+        std::cout << "[Program Change] ";
+        handleChannel10(data, pos, eventType);
+    }
+    else if (eventType == 0x99) {
+        std::cout << "[Note On] ";
+        handleNoteOn(data, pos, note_on_time, tpqn, midiFilePath);
+    }
+    else if (eventType == 0x89 || eventType == 0xA9) {
+        std::cout << "[Note Off], or poly ";
+        pos += 2; // Skip note and velocity
+    }
+    else {
+        std::cout << "[Unknown Event] Skipping byte\n";
+        pos++;
     }
 }
+
 // Process Meta Events (Essential Only)
 void handleMetaEvent(const std::vector<unsigned char>& data, size_t& pos, int &initial_setting_flag) {
     unsigned char metaType = data[pos++]; // Read meta event type
@@ -120,7 +137,7 @@ void handleNoteOn(const std::vector<unsigned char>& data, size_t& pos, double &n
         case 41: drumName = "Low Floor Tom"; break;
         case 38: drumName = "Acoustic Snare"; break;
         case 45: drumName = "Low Tom"; break;
-        case 47: drumName = "Low Mid Tom"; break;
+        case 47: case 48: case 50: drumName = "Low Mid Tom"; break;
         case 42: drumName = "Closed Hi-Hat"; break;
         case 46: drumName = "Open Hi-Hat"; break;
         case 49: drumName = "Crash Cymbal 1"; break;
@@ -155,7 +172,7 @@ void save_to_csv(const std::string& outputCsvPath, double &note_on_time, int dru
         case 38: mappedDrumNote = 1; break;
         case 41: mappedDrumNote = 2; break;
         case 45: mappedDrumNote = 3; break;
-        case 47: mappedDrumNote = 4; break;
+        case 47: case 48: case 50: mappedDrumNote = 4; break;
         case 42: mappedDrumNote = 5; break;
         case 51: mappedDrumNote = 6; break;
         case 49: mappedDrumNote = 7; break;

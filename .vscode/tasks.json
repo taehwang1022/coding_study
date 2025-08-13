@@ -7,10 +7,12 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
-                "-I", "/usr/include/eigen3",            // ✅ 이 줄 추가!!
+                "-I", "/usr/include/eigen3",
                 "${file}",
                 "-o",
-                "${fileDirname}/${fileBasenameNoExtension}"
+                "${fileDirname}/${fileBasenameNoExtension}",
+                "-lsfml-audio",
+                "-lsfml-system"
             ],
             "options": {
                 "cwd": "${fileDirname}"
