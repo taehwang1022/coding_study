@@ -14,7 +14,7 @@ struct VelocityEntry {
 
 void analyzeVelocityWithLowPassFilter(const std::string& velocityFile,
                                       const std::string& outputFile,
-                                      double windowSize = 1.0)
+                                      double windowSize = 0.6)
 {
     std::ifstream in(velocityFile);
     if (!in.is_open()) {
@@ -113,7 +113,7 @@ int main()
         outputFile = velocityFile + "_s.txt";
     }
 
-    double windowSize = 2.4;  // 1초 단위로 구간 나누기
+    double windowSize = 0.6;  // 1초 단위로 구간 나누기
 
     analyzeVelocityWithLowPassFilter(velocityFile, outputFile, windowSize);
     

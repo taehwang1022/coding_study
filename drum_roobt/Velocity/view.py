@@ -5,7 +5,7 @@ import numpy as np
 mode = input("📊 그래프 모드를 선택하세요 (1: 선그래프, 2: 막대그래프): ").strip()
 
 # 파일 경로
-filename = '/home/taehwang/basic-algo-lecture-master/drum_roobt/Velocity/test_s.txt'
+filename = '/home/taehwang/basic-algo-lecture-master/drum_roobt/Velocity/test_vel_s.csv'
 
 # 데이터 리스트
 start_time = []
