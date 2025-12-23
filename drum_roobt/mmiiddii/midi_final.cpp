@@ -48,9 +48,8 @@ void handleMetaEvent(const std::vector<unsigned char>& data, size_t& pos, int &b
                     ((data[pos + 1] & 0xFF) << 8) |
                     (data[pos + 2] & 0xFF);
         bpm = 60000000 / tempo;
-        bpm =100;
         std::cout << "  - Tempo Change: " << bpm << " BPM\n";
-        usleep(5000000);
+        usleep(500000);
     } else if (metaType == 0x2F) {
         // std::cout << "  - End of Track reached\n";
     }
@@ -202,6 +201,52 @@ void roundDurationsToStep(const std::string& inputFilename, const std::string& o
 
 }
 
+void roundDurationsToStepSet100(int bpm, const std::string& inputFilename, const std::string& outputFilename)
+{
+    std::ifstream inputFile(inputFilename);
+    std::ofstream outputFile(outputFilename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "roundDurationsToStep 입력 파일 열기 실패: " << inputFilename << std::endl;
+        return;
+    }
+
+    if (!outputFile.is_open()) {
+        std::cerr << "roundDurationsToStep 출력 파일 열기 실패: " << outputFilename << std::endl;
+        return;
+    }
+
+    std::string line;
+    const double step = 0.05;
+    int targetBPM = 100;
+    const double scale = static_cast<double>(bpm) / static_cast<double>(targetBPM);
+
+
+    while (std::getline(inputFile, line)) {
+        std::istringstream iss(line);
+        double duration;
+        int note;
+
+        if (!(iss >> duration >> note)) {
+            std::cerr << "roundDurationsToStep 잘못된 형식: " << line << std::endl;
+            continue;
+        }
+
+        // (1) BPM 기준 재정립: 초 단위 스케일링
+        double rebased = duration * scale;
+
+        // 0.05 단위로 반올림
+        double roundedDuration = std::round(rebased / step) * step;
+
+        outputFile << std::fixed << std::setprecision(3)
+                   << roundedDuration << "\t" << note << std::endl;
+    }
+
+    inputFile.close();
+    outputFile.close();
+
+}
+
 double dist(const Coord& a, const Coord& b) {
     return std::sqrt(
         (a.x - b.x)*(a.x - b.x) +
@@ -220,13 +265,13 @@ Hand getPreferredHandByDistance(int instCurrent, int prevRightNote, int prevLeft
     double dRight = dist(curr, right);
     double dLeft = dist(curr, left);
     // 시간의 max값 0.6으로 고정
-    double real_tRight = std::min(prevRightHit, 0.6) * 1.38;
-    double real_tLeft  = std::min(prevLeftHit, 0.6) * 1.38;
-    double normRight = std::min(dRight / dMax, 1.0);
-    double normLeft = std::min(dLeft / dMax, 1.0);
+    double real_tRight = std::min(prevRightHit, 0.6);
+    double real_tLeft  = std::min(prevLeftHit, 0.6);
+    double normRight = std::min(dRight / dMax, 1.0)*2;
+    double normLeft = std::min(dLeft / dMax, 1.0)*2;
 
-    double rScore = (real_tRight / 0.6) * (1 - normRight);
-    double lScore = (real_tLeft  / 0.6) * (1 - normLeft);
+    double rScore = (real_tRight / 0.6) * (2 - normRight);
+    double lScore = (real_tLeft  / 0.6) * (2 - normLeft);
 
     // 디버깅용 프린트문
     std::cout << "\n[Hand 선택 판단]\n";
@@ -234,6 +279,7 @@ Hand getPreferredHandByDistance(int instCurrent, int prevRightNote, int prevLeft
     std::cout << " - prevRightNote: " << prevRightNote << ", prevLeftNote: " << prevLeftNote << "\n";
     std::cout << " - 거리: right = " << dRight << ", left = " << dLeft << "\n";
     std::cout << " - 시간누적: right = " << prevRightHit << ", left = " << prevLeftHit << "\n";
+    std::cout << " - 사용시간: right = " << real_tRight << ", left = " << real_tLeft << "\n";
     std::cout << " - 정규화 거리: right = " << normRight << ", left = " << normLeft << "\n";
     std::cout << " - 점수: rScore = " << rScore << ", lScore = " << lScore << "\n";
 
@@ -364,6 +410,74 @@ std::pair<int, int> assignHandsByPosition(int inst1, int inst2) {
     }
 }
 
+static int zoneOf(int inst) {
+    if (inst == 0) return 0;          // 비어있음
+    if (inst == 5) return 1;          // 하이햇
+    if (inst == 8 || inst == 4 || inst == 1) return 2; // 크래시(8), 하이탐(4), 스네어(1)
+    if (inst == 2 || inst == 3 || inst == 6) return 3; // 플로어(2), 미드탐(3), 라이드벨(6)
+    if (inst == 7) return 4;          // 라이드(7)
+    return 3; // 정의 밖은 기본적으로 중앙-우측 계열로 가정
+}
+
+static bool isCrossed(int rightInst, int leftInst) {
+    if (rightInst == 0 || leftInst == 0) return false;          // 한 손 비어있으면 꼬임 아님
+    if (rightInst == 5 && leftInst == 1) return false;          // 예외 허용(오른손 하이햇, 왼손 스네어)
+    int zr = zoneOf(rightInst);
+    int zl = zoneOf(leftInst);
+    return (zl > zr);
+}
+
+// 손 크로스 방지 함수
+void checkCross(int& rightHand, int& leftHand,
+                int prevRightNote, int prevLeftNote) {
+    std::cout << "    [CrossCheck] In RH=" << rightHand << " LH=" << leftHand
+              << " | lastR=" << prevRightNote << " lastL=" << prevLeftNote << "\n";
+
+    // 1) 양손 동시타 → 현재 프레임 내에서 교차 검사
+    if (rightHand && leftHand) {
+        int zr = zoneOf(rightHand), zl = zoneOf(leftHand);
+        std::cout << "    [Both] zone(LH)=" << zl << ", zone(RH)=" << zr << "\n";
+        if (isCrossed(rightHand, leftHand)) {
+            std::cout << "    [Both→Swap] LH(" << leftHand << ',' << zl
+                      << ") > RH(" << rightHand << ',' << zr << ") → Swap\n";
+            std::swap(rightHand, leftHand);
+            std::cout << "    [Both→After] RH=" << rightHand
+                      << " LH=" << leftHand << "\n";
+        }
+        return;
+    }
+
+    // 2) 단일타: RH만 있음 → 이전 왼손과 비교
+    if (rightHand && !leftHand) {
+        if (prevLeftNote && isCrossed(rightHand, prevLeftNote)) {
+            int zr = zoneOf(rightHand), zl = zoneOf(prevLeftNote);
+            std::cout << "    [Single RH] RH(" << rightHand << ',' << zr
+                      << ") vs lastL(" << prevLeftNote << ',' << zl << ") → LH 재배정\n";
+            leftHand = rightHand;
+            rightHand = 0;
+            std::cout << "    [Single RH→After] RH=" << rightHand
+                      << " LH=" << leftHand << "\n";
+        }
+        return;
+    }
+
+    // 3) 단일타: LH만 있음 → 이전 오른손과 비교
+    if (leftHand && !rightHand) {
+        if (prevRightNote && isCrossed(prevRightNote, leftHand)) {
+            int zr = zoneOf(prevRightNote), zl = zoneOf(leftHand);
+            std::cout << "    [Single LH] lastR(" << prevRightNote << ',' << zr
+                      << ") vs LH(" << leftHand << ',' << zl << ") → RH 재배정\n";
+            rightHand = leftHand;
+            leftHand = 0;
+            std::cout << "    [Single LH→After] RH=" << rightHand
+                      << " LH=" << leftHand << "\n";
+        }
+        return;
+    }
+
+    std::cout << "    [None] RH=0, LH=0 → skip\n";
+}
+
 void assignHandsToEvents(const std::string& inputFilename, const std::string& outputFilename) {
     std::ifstream input(inputFilename);
     if (!input.is_open()) {
@@ -384,7 +498,9 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
 
     std::string line;
     std::vector<FullEvent> events;
+    //직전 라인에 할당된 악기 0 포함
     int prevRight = 1, prevLeft = 1;
+    //실제 마지막으로 친 악기
     int prevRightNote = 1, prevLeftNote = 1;
     double prevRightHit = 0, prevLeftHit = 0;
 
@@ -407,21 +523,79 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
                   << " | PrevR: " << prevRight << ", PrevL: " << prevLeft
                   << " | RHit: " << prevRightHit << ", LHit: " << prevLeftHit << "\n";
         
-        //step 1 크러시가 있는지 확인 크러쉬가 있다면 
-        if (inst1 == 8 || inst2 == 8) {
-            std::cout << "→ 크러시 처리 진입\n";
-            if(prevLeft == 2 || prevLeft == 3 || prevLeft == 6) {
-                e.rightHand = 7;
-                e.leftHand = (inst1 == 8) ? inst2 : inst1;
-            } else {
-                if (inst1 == 2 || inst1 == 3 || inst1 == 6 || inst2 == 2 || inst2 == 3 || inst2 == 6) {
-                    e.rightHand = 7;
-                    e.leftHand = (inst1 == 8) ? inst2 : inst1;
-                } else {
-                    e.rightHand = 8;
-                    e.leftHand = (inst1 == 8) ? inst2 : inst1;
+        // //step 1 크러시가 있는지 확인 크러쉬가 있다면 
+        // if (inst1 == 8 || inst2 == 8) {
+        //     std::cout << "→ 크러시 처리 진입\n";
+        //     if(prevLeft == 2 || prevLeft == 3 || prevLeft == 6) {
+        //         e.rightHand = 7;
+        //         e.leftHand = (inst1 == 8) ? inst2 : inst1;
+        //     } else {
+        //         if (inst1 == 2 || inst1 == 3 || inst1 == 6 || inst2 == 2 || inst2 == 3 || inst2 == 6) {
+        //             e.rightHand = 7;
+        //             e.leftHand = (inst1 == 8) ? inst2 : inst1;
+        //         } else {
+        //             e.rightHand = 8;
+        //             e.leftHand = (inst1 == 8) ? inst2 : inst1;
+        //         }
+        //     }
+        // }
+        // //step 1-1 크러시가 있는지 확인 크러쉬가 있다면 
+        if(inst1 == 7 || inst1 == 8 || inst2 == 7 || inst2 == 8)
+        {
+            std::cout << "→ 크러시 처리 진입 1-1\n";
+            //양손연주라면
+            if (inst1 != 0 && inst2 != 0)
+                {
+                    // 두 손 모두 크래시를 치는 경우 → 규칙적으로 inst1=7(오른 크래시), inst2=8(왼 크래시)로 고정
+                    bool bothCrash = ((inst1 == 7 || inst1 == 8) && (inst2 == 7 || inst2 == 8));
+                    if (bothCrash) {
+                        e.rightHand = 7; 
+                        e.leftHand  = 8;
+                    }
+                    else {
+                        // 두 손이 동시에 치지만 "둘 다 크래시가 아님" → 기존 위치 기반 손 배분 사용
+                        auto [left, right] = assignHandsByPosition(inst1, inst2);
+                        e.leftHand  = left;
+                        e.rightHand = right;
+                    }
                 }
-            }
+                //한손 연주 라면
+                else
+                {
+                    // 마지막으로 왼손으로 친게 3,2,7,6 중에 하나면 오른손으로 오른쪽 크러시 치기
+                    if (prevLeftNote == 3 || prevLeftNote == 2 || prevLeftNote == 7 || prevLeftNote == 6) {
+                        e.leftHand  = 0;
+                        e.rightHand = 7;
+                    } 
+                    //아니라면 왼쪽 크러시를 사용할 예정
+                    else {
+                        if (prevRightNote == 3 || prevRightNote == 2 || prevRightNote == 7 || prevRightNote == 6)
+                        {
+                            e.rightHand = 0;
+                            e.leftHand  = 8;
+                        }
+                        else
+                        {
+                            e.rightHand = 8;
+                            e.leftHand  = 0;
+                        }
+
+                    }
+                    // //이건 전에 친 악/기 섹션 비고 하는거 위에 방법을 쓰던 밑에 섹션비교방법을쓰던 하나만쓰기
+                    // auto [left, right] = assignHandsByPosition(prevRightNote, prevLeftNote);
+                    // // leftInstOfPair가 prevLeftNote라면 '왼손 위치가 더 왼쪽'이라는 뜻
+                    // bool chooseLeft = (left == prevLeftNote);
+
+
+                    // // 실제 출력 반영: 어느 슬롯이 비어있든 상관없이 8을 선택 손에 할당
+                    // if (chooseLeft) {
+                    //     e.leftHand  = 8;
+                    //     e.rightHand = 0;
+                    // } else {
+                    //     e.rightHand = 8;
+                    //     e.leftHand  = 0;
+                    // }
+                }
         }
         // step 2 양손 연주인지 한손인지 구분 
         else if (inst1 != 0 && inst2 != 0) {
@@ -507,6 +681,8 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
 
         std::cout << "→ 결과: RH = " << e.rightHand << ", LH = " << e.leftHand << "\n\n";
 
+        checkCross(e.rightHand, e.leftHand, prevRightNote, prevLeftNote);
+
         prevRight = e.rightHand;
         prevLeft = e.leftHand;
         if (e.rightHand != 0) { prevRightNote = e.rightHand; prevRightHit = 0; }
@@ -518,8 +694,8 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
     for (const auto& e : events) {
         int rightFlag = 0;
         int leftFlag = 0;
-        if(e.rightHand != 0)    rightFlag = 5;
-        if(e.leftHand != 0)     leftFlag = 5;
+        if(e.rightHand != 0)    rightFlag = 1;
+        if(e.leftHand != 0)     leftFlag = 1;
         output << std::fixed << std::setprecision(3)
                << e.time
                << std::setw(6) << e.rightHand
@@ -601,6 +777,120 @@ void convertToMeasureFile(const std::string& inputFilename, const std::string& o
 
     output << measureNum+1 << "\t 0.600\t 0\t 0\t 0\t 0\t 0\t 0\n";
     output << "-1" << "\t 0.600\t 1\t 1\t 1\t 1\t 1\t 1\n";
+}
+
+void newconvertToMeasureFile(const std::string& inputFilename, const std::string& outputFilename) {
+    struct DrumEvent {
+        double time;
+        int rightInstrument;
+        int leftInstrument;
+        int rightPower;
+        int leftPower;
+        int isBass;     // 킥
+        int hihatOpen;  // 하이햇 오픈(상태)
+    };
+
+    constexpr double CHUNK = 0.6;     // 쪼개기 단위
+    constexpr double MEASURE = 2.4;   // 1마디(= 0.6 * 4)
+    constexpr double EPS = 1e-9;
+
+    std::ifstream input(inputFilename);
+    if (!input.is_open()) {
+        std::cerr << "입력 파일 열기 실패: " << inputFilename << "\n";
+        return;
+    }
+    std::ofstream output(outputFilename);
+    if (!output.is_open()) {
+        std::cerr << "출력 파일 생성 실패: " << outputFilename << "\n";
+        return;
+    }
+
+    std::vector<DrumEvent> chunks;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) continue;
+
+        DrumEvent ev{};
+        {
+            std::stringstream ss(line);
+            if (!(ss >> ev.time
+                     >> ev.rightInstrument >> ev.leftInstrument
+                     >> ev.rightPower >> ev.leftPower
+                     >> ev.isBass >> ev.hihatOpen)) {
+                continue; // 파싱 실패 라인 스킵
+            }
+        }
+        if (ev.time <= 0) continue;
+
+        int fullCnt = static_cast<int>((ev.time + EPS) / CHUNK);
+        double leftover = ev.time - fullCnt * CHUNK;
+        if (std::fabs(leftover) < 1e-7) leftover = 0.0;
+
+        if (fullCnt == 0 && leftover > EPS) {
+            chunks.push_back(ev);
+        } else {
+            for (int i = 0; i < fullCnt; ++i) {
+                bool isLastFull = (leftover <= EPS) && (i == fullCnt - 1);
+                DrumEvent piece;
+                piece.time = CHUNK;
+                if (isLastFull) {
+                    piece.rightInstrument = ev.rightInstrument;
+                    piece.leftInstrument  = ev.leftInstrument;
+                    piece.rightPower      = ev.rightPower;
+                    piece.leftPower       = ev.leftPower;
+                    piece.isBass          = ev.isBass;
+                } else {
+                    piece.rightInstrument = 0;
+                    piece.leftInstrument  = 0;
+                    piece.rightPower      = 0;
+                    piece.leftPower       = 0;
+                    piece.isBass          = 0;
+                }
+                piece.hihatOpen = ev.hihatOpen; // 상태 유지
+                chunks.push_back(piece);
+            }
+            if (leftover > EPS) {
+                DrumEvent last = ev;
+                last.time = leftover;
+                chunks.push_back(last);
+            }
+        }
+    }
+
+    output << std::fixed << std::setprecision(3);
+
+    //선두 더미 라인
+    output << 1 << "\t " << 0.600 << "\t 0\t 0\t 0\t 0\t 0\t 0\n";
+
+    int measureNum = 1;
+    double acc = 0.0;
+
+    for (const auto& e : chunks) {
+        if (acc + e.time > MEASURE + EPS) {
+            ++measureNum;
+            acc = 0.0;
+        }
+
+        output << measureNum << "\t "
+               << e.time << "\t "
+               << e.rightInstrument << "\t "
+               << e.leftInstrument  << "\t "
+               << e.rightPower      << "\t "
+               << e.leftPower       << "\t "
+               << e.isBass          << "\t "
+               << e.hihatOpen       << "\n";
+
+        acc += e.time;
+
+        if (std::fabs(acc - MEASURE) < 1e-7) {
+            ++measureNum;
+            acc = 0.0;
+        }
+    }
+
+    //말미 더미 + 종료 라인
+    output << measureNum + 1 << "\t " << 0.600 << "\t 0\t 0\t 0\t 0\t 0\t 0\n";
+    output << -1 << "\t " << 0.600 << "\t 1\t 1\t 1\t 1\t 1\t 1\n";
 }
 
 void addGroove(int bpm, const std::string& inputFile, const std::string& outputFile) {
@@ -817,16 +1107,27 @@ int main() {
         pos = trackEnd;
     }
 
+    int use_addGroove = 0;
+
 
 
     MakeVelocitySummary(bpm,VelfileOrigin,Velfile);
-
-
-    roundDurationsToStep(outputPath1, outputPath2); 
+    //roundDurationsToStep(outputPath1, outputPath2); 
+    
+    roundDurationsToStepSet100(bpm,outputPath1, outputPath2);
     convertMcToC(outputPath2, outputPath3);
     assignHandsToEvents(outputPath3, outputPath4);
     addGroove(bpm, outputPath4, outputPath5);
-    convertToMeasureFile(outputPath5, outputPath6);
+
+    if(use_addGroove)
+    {
+        convertToMeasureFile(outputPath5, outputPath6);
+    }
+    else
+    {
+        newconvertToMeasureFile(outputPath4, outputPath6);
+    }
+
     
     return 0;
 }

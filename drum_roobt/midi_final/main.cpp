@@ -211,6 +211,23 @@ void convertMcToC(const std::string& inputFilename, const std::string& outputFil
     std::cout << "변환 완료! 저장 위치 → " << outputFilename << "\n";
 }
 
+static int zoneOf(int inst) {
+    if (inst == 0) return 0;          // 비어있음
+    if (inst == 5) return 1;          // 하이햇
+    if (inst == 8 || inst == 4 || inst == 1) return 2; // 크래시(8), 하이탐(4), 스네어(1)
+    if (inst == 2 || inst == 3 || inst == 6) return 3; // 플로어(2), 미드탐(3), 라이드벨(6)
+    if (inst == 7) return 4;          // 라이드(7)
+    return 3; // 정의 밖은 기본적으로 중앙-우측 계열로 가정
+}
+
+static bool isCrossed(int rightInst, int leftInst) {
+    if (rightInst == 0 || leftInst == 0) return false;          // 한 손 비어있으면 꼬임 아님
+    if (rightInst == 5 && leftInst == 1) return false;          // 예외 허용(오른손 하이햇, 왼손 스네어)
+    int zr = zoneOf(rightInst);
+    int zl = zoneOf(leftInst);
+    return (zl > zr);
+}
+
 void assignHandsToEvents(const std::string& inputFilename, const std::string& outputFilename) {
     std::ifstream input(inputFilename);
     if (!input.is_open()) {
@@ -282,6 +299,21 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
             }
         }
 
+
+        // 손 배정이 끝난 직후 손 크로스 안되게 막는것
+        if (e.rightHand != 0 && e.leftHand != 0) {
+            int zr = zoneOf(e.rightHand);
+            int zl = zoneOf(e.leftHand);
+
+            // 예외: 오른손=하이햇(5), 왼손=스네어(1)
+            bool exception = (e.rightHand == 5 && e.leftHand == 1);
+
+            if (!exception && zl > zr) {
+                std::swap(e.rightHand, e.leftHand);
+            }
+        }
+
+
         if (e.rightHand != 0) { prevRightNote = e.rightHand; prevRightHit = 0; }
         if (e.leftHand != 0) { prevLeftNote = e.leftHand; prevLeftHit = 0; }
 
@@ -289,8 +321,10 @@ void assignHandsToEvents(const std::string& inputFilename, const std::string& ou
     }
 
     for (const auto& e : events) {
-        int rightFlag = (e.rightHand != 0) ? 1 : 0;
-        int leftFlag = (e.leftHand != 0) ? 1 : 0;
+        int rightFlag = 0;
+        int leftFlag = 0;
+        if(e.rightHand != 0)    rightFlag = 5;
+        if(e.leftHand != 0)     leftFlag = 5;
         output << std::fixed << std::setprecision(3)
                << e.time
                << std::setw(6) << e.rightHand
@@ -371,7 +405,7 @@ void convertToMeasureFile(const std::string& inputFilename, const std::string& o
     }
 
     output << measureNum+1 << "\t 0.600\t 0\t 0\t 0\t 0\t 0\t 0\n";
-    output << measureNum+1 << "\t 0.600\t 1\t 1\t 1\t 1\t 1\t 1\n";
+    output << "-1" << "\t 0.600\t 1\t 1\t 1\t 1\t 1\t 1\n";
 
     std::cout << "코드 끗." << std::endl;
 }

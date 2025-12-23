@@ -1,0 +1,58 @@
+def quantize_drum_midi(input_path: str) -> str:                      # 입력으로 MIDI 파일 경로를 받고, 출력으로 새로 만든(양자화된) 파일 경로를 반환
+    """입력 MIDI의 드럼 노트를 0.125초 그리드로 양자화하고, 생성된 파일 경로를 반환한다."""
+    if not os.path.isfile(input_path):                                # 파일 존재 여부 확인
+        raise FileNotFoundError(f"Input MIDI not found: {input_path}")# 없으면 예외 발생
+
+    # 내부 파라미터
+    GRID_SEC = 0.125      # 120 BPM 기준 16분음표 길이(초) — 전 구간 고정 그리드 간격
+    MIN_DUR_SEC = 0.001   # 최소 노트 길이(초) 1ms — 0길이 노트 방지
+
+    def to_idx_nearest(t: float) -> int:                              # 시간 t(초)를 그리드 인덱스로 변환(가까운 0.125s 배수로 반올림)
+        return max(0, int(round(t / GRID_SEC)))
+
+    def idx_time(i: int) -> float:                                    # 그리드 인덱스를 다시 초 단위 시간으로 환산
+        return i * GRID_SEC
+
+    pm = pretty_midi.PrettyMIDI(input_path)                           # MIDI 로드 → PrettyMIDI 객체 생성
+    song_end = pm.get_end_time()                                      # 곡 전체 종료 시간(초)
+
+    # (pitch, grid_idx) -> 후보 노트들 저장할 버킷
+    bucket: Dict[Tuple[int, int], List[pretty_midi.Note]] = defaultdict(list)
+
+    # 드럼 노트만 수집/스냅
+    for inst in pm.instruments:                                       # 모든 트랙(악기) 순회
+        if not inst.is_drum:                                          # 드럼 트랙이 아니면 건너뜀
+            continue
+        for note in inst.notes:                                       # 드럼 트랙의 모든 노트 순회
+            idx = to_idx_nearest(max(0.0, note.start))                # 노트 시작시간을 최근접 그리드 인덱스로 변환(음수 방지)
+            snapped_start = idx_time(idx)                             # 스냅된 시작시간(초)
+            next_boundary = idx_time(idx + 1)                         # 다음 그리드 경계(초)
+            snapped_end = max(snapped_start + MIN_DUR_SEC,            # 최소 길이 보장하면서
+                              min(next_boundary, song_end))           # 다음 경계 또는 곡 끝을 넘지 않도록 종료시간 결정
+
+            bucket[(note.pitch, idx)].append(pretty_midi.Note(        # (피치, 그리드칸) 단위로 후보 노트 모으기
+                velocity=note.velocity,                               # 원래 벨로시티 유지
+                pitch=note.pitch,                                     # 원래 피치(드럼 킷 키 번호) 유지
+                start=snapped_start,                                  # 스냅된 시작시간
+                end=snapped_end                                       # 스냅된 종료시간(다음 칸 시작까지)
+            ))
+
+    # 중복 해소: 동일 (pitch, grid_idx)에서 velocity 최댓값 1개만 유지
+    snapped_notes: List[pretty_midi.Note] = []                        # 최종 채택 노트 리스트
+    for (pitch, idx), cands in bucket.items():                        # 각 (피치, 그리드칸)마다
+        best = max(cands, key=lambda n: n.velocity)                   # 가장 강한(velocity 최대) 노트 하나 선택
+        snapped_notes.append(best)                                    # 채택
+    snapped_notes.sort(key=lambda n: n.start)                         # 시간순 정렬(가독성/일관성)
+
+    # 드럼 트랙 재구성(단일 트랙으로 교체), 비드럼 트랙 보존
+    non_drums = [i for i in pm.instruments if not i.is_drum]          # 비드럼 트랙들만 따로 뽑기(원형 유지 목적)
+    drum_out = pretty_midi.Instrument(program=0, is_drum=True,        # 새 드럼 트랙 하나 생성
+                                      name="Drums(quantized-0.125s)")
+    drum_out.notes = snapped_notes                                     # 스냅/중복정리된 노트만 넣기
+    pm.instruments = non_drums + [drum_out]                            # 비드럼 + 새 드럼 트랙으로 교체(기존 드럼 트랙들은 대체)
+
+    # 출력 경로 생성 및 저장
+    base, _ = os.path.splitext(input_path)                             # 입력 파일명에서 확장자 제거
+    output_path = f"{base}_quantizer.mid"                              # 접미사 붙여 새 파일명 구성
+    pm.write(output_path)                                              # 디스크에 MIDI 저장
+    return output_path                                                 # 저장된 파일 경로 반환
